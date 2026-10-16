@@ -1,0 +1,14 @@
+{
+    "model_name": "claude-sonnet-4-20250514",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "strategy_name": "taxonomy_optimized",
+    "storage_name": "mysql",
+    "enable_citations": false,
+    "storage_config": {
+        "host": "127.0.0.1",
+        "database": "court_documents_analysis_by_ai",
+        "results_table": "classification_result",
+        "experiment_table": "experiment",
+        "request_log_table": "request_log"
+    }
+}

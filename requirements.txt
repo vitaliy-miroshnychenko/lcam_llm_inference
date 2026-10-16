@@ -1,0 +1,12 @@
+tqdm
+pandas
+numpy
+spacy
+openai
+anthropic
+python-Levenshtein
+ollama
+mysql-connector-python
+fastapi
+fastapi[standard]
+uvicorn

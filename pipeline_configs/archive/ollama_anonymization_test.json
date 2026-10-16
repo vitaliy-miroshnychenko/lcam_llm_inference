@@ -1,0 +1,1 @@
+{"experiment_name": "ollama_anonymization_test", "classification_model_doc_type": "gemma3:1b", "classification_model_proc_type": "gemma3:1b", "validation_model": "gemma3:1b"}

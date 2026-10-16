@@ -1,0 +1,16 @@
+{
+    "model_name": "qwen3:8b",
+    "api_key_env": "GEMINI_API_KEY",
+    "strategy_name": "iterative",
+    "storage_name": "mysql",
+    "storage_config": {
+        "host": "127.0.0.1",
+        "database": "court_documents_analysis_by_ai",
+        "results_table": "classification_result",
+        "experiment_table": "experiment",
+        "request_log_table": "request_log"
+    },
+    "classification_config":{
+        "types_to_classify": ["рішення", "постанова", "окрема ухвала", "судовий наказ", "ухвала"]
+    }
+}

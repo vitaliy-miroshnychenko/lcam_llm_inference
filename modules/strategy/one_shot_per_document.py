@@ -1,0 +1,160 @@
+import json
+import time
+from modules.adapters.adapter_factory import AdapterFactory
+from modules.anonymization import anonymize
+
+from modules.strategy.strategy import Strategy
+import re
+from modules.logger import Logger
+
+
+class OneShotPerDocument(Strategy):
+    STRATEGY_NAME = "one_shot_per_document"
+    instruction_code = """
+Ти - спеціаліст у галузі цивільного права та цивільного процесуального права України. 
+У нас є процесуальні документи, постановлені судом під час розгляду справи на різних стадіях провадження у справі в порядку цивільного судочинства.
+
+Задача: визначити код кожного процесуального документу відповідно до кодів процесуальних рішень
+
+Обов'язково дотримуйся вимог:
+- Написати лише код процесуального рішення, що відповідає документу
+- Повертай лише номер рядка! 
+- Переконайся, що повертаєш лише числовий код без букв або інших символів
+- Якщо не вдається категоризувати документ, повертай -1
+"""
+
+    def __init__(self):
+        self.documents = []
+        self.categories = []
+        self.classification_config = None
+        self.enable_citations = False
+        self.enable_case_summary = False
+        self.enable_motivation = False
+        self.logger = Logger()
+
+    def execute(self):
+        self.adapter = AdapterFactory.get_adapter(
+            self.config["model_name"],
+            self.config.get_api_key()
+        )
+        self.adapter.set_storage(self.storage)
+        self.logger.debug(f"Using model: {self.config['model_name']}")
+
+        if self.config["enable_citations"]:
+            self.enable_citations = True
+
+        result = []
+        documents = self.storage.load_data()
+
+        for idx, document in enumerate(documents):
+            start_time = time.time()
+            res = self.classify_document(document)
+            elapsed_time = time.time() - start_time
+            self.logger.log(
+                f"Classification result: for document {document['document_id']}: {res['code']}. True category: {document.get('true_category', 'N/A')}")
+            result.append(res)
+
+            # Prepare data for classification_result table
+            data = {
+                "document_id": res.get("document_id"),
+                "predicted_category": res.get("code"),
+                "experiment_id": getattr(self.storage, "experiment_id", None),
+                "case_number": getattr(document, "case_number", None) if hasattr(document,
+                                                                                 "case_number") else document.get(
+                    "case_number", None),
+                "true_category": getattr(document, "true_category", None) if hasattr(document,
+                                                                                     "true_category") else document.get(
+                    "true_category", None),
+                "response": res.get("response", None),
+                "elapsed_time": elapsed_time
+            }
+            self.storage.write_record("result", data)
+
+        if not documents:
+            self.logger.log("No documents to classify.")
+        else:
+            self.storage.update_experiment_accuracy()
+        return result
+
+    def classify_document(self, document):
+        index = int(document['judgment_code'])
+
+        selected_option = None
+        options = self.storage.load_taxonomy(index)
+        requested_taxonomy = self.generate_requested_taxonomy(index)
+
+        indent = 0
+        self.adapter.reset()
+        context1 = {"type": "text", "content": self.instruction_code}
+        self.adapter.add_context(context1)
+
+        document_content_block = {
+            "type": "document",
+            "content_type": "text",
+            "media_type": "text/plain",
+            "data": anonymize(document['html']),
+            "title": f"Документ {document['document_id']}",
+            "context": "Документ для аналізу",
+            # "cache": True
+        }
+        if self.config["enable_citations"]:
+            document_content_block["citations"] = True
+
+        codes_content_block = {
+            "type": "text",
+            "text": "Коди процесуальних рішень: " + ",\n".join(requested_taxonomy),
+            "cache": True
+        }
+
+        request_content_block = {
+            "type": "text",
+            "text": "Визнач один або декілька кодів процесуальних рішеннь для цього документу відповідно до наданих варіантів. Поверни лише числові значення через кому. Не пиши обгрунтування, лише коди.",
+            # "cache": True
+        }
+
+        message = {
+            "role": "user",
+            "content": [
+                # codes_content_block,
+                document_content_block,
+                request_content_block
+            ]
+        }
+        self.adapter.add_context({"type": "text", "content": codes_content_block['text'], "cache": True})
+        self.adapter.add_message(message)
+
+        response = self.adapter.execute(document['document_id'])
+        codes = response.get_output()
+        result = {'document_id': document['document_id'], 'code': codes}
+
+        if self.config["enable_citations"]:
+            self.adapter.reset()
+            self.adapter.add_context(context1)
+            self.adapter.add_message(message)
+            self.adapter.add_message({"role": "assistant", "content": str(codes)})
+            self.adapter.add_message({"role": "user", "content": "Поясни свою відповідь"})
+            response = self.adapter.execute(document['document_id'])
+            response_message = json.dumps(response.__dict__, default=str, ensure_ascii=False)
+            result['response'] = response_message
+
+        return result
+
+    def generate_requested_taxonomy(self, index, indent=1):
+        CODES = {'3': 'рішення', '2': 'постанова', '6': 'окрема ухвала', '4': 'судовий наказ', '5': 'ухвала'}
+        taxonomy = []
+        if len(str(index)) == 1:
+            taxonomy.append(f"{index}. {CODES[str(index)]}")
+
+        options = self.storage.load_taxonomy(index)
+        for i, option in enumerate(options):
+            taxonomy.append(f"{'  ' * indent}{option['code']}. {option['title']}")
+            sub_taxonomy = self.generate_requested_taxonomy(option['code'], indent + 1)
+            taxonomy.extend(sub_taxonomy)
+        return taxonomy
+
+
+# if __name__ == '__main__':
+#     # strategy = OneShotPerDocument()
+#     # taxonomy = strategy.generate_requested_taxonomy('2')
+#     #
+    # print(taxonomy)
